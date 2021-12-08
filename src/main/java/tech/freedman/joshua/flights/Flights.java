@@ -13,27 +13,22 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
-public class Flights {
+public class Flights implements Runnable {
 
-    final String ip;
+    private final URL aircraftUrl;
+    private final Gson gson;
+    /**
+     * The array of Data Streamers that will get a list of flights on each execution of `run()`
+     */
+    private final IDataStreamer[] dataStreamers;
 
-    final short port;
-    final URL aircraftUrl;
-    final Gson gson;
+    public Flights(final String domain, final int port, final IDataStreamer... dataStreamers) throws MalformedURLException {
+        this.aircraftUrl = new URL("https", domain, port, "/data/aircraft.json");
+        this.dataStreamers = dataStreamers;
 
-    private final IDataStreamer dataStreamer;
-
-    public Flights() throws MalformedURLException {
-        this.ip = "flights.joshua.freedman.tech";
-        this.port = 443;
-        this.aircraftUrl = new URL("https", this.ip, this.port, "/data/aircraft.json");
         this.gson = new GsonBuilder()
                 .setPrettyPrinting()
                 .create();
-
-        // this.dataStreamer = new InfluxDbStreamer(this, "ORG", "BUCKET", "HOST", "TOKEN");
-        this.dataStreamer = stream -> { // NOOP
-        };
     }
 
     static Integer averageAltitude(final Aircraft aircraft) {
@@ -64,16 +59,19 @@ public class Flights {
         return output.toString();
     }
 
+    @Override
+    public void run() {
+        final List<Aircraft> aircraft = this.getAircraft();
+        for (final IDataStreamer dataStreamer : this.dataStreamers) {
+            dataStreamer.writeData(aircraft.stream());
+        }
+    }
+
     public static void main(String[] args) throws MalformedURLException {
 
-        final Flights flights = new Flights();
-
-        while (true) {
-            final List<Aircraft> aircrafts = flights.getAircraft();
-
-            flights.dataStreamer.writeData(aircrafts.stream());
-
-            aircrafts.stream()
+        // We are creating out flights instance. The dataStreamers parameter is varags, and allows for us to have multiple data handlers
+        Flights flights = new Flights("flights.joshua.freedman.tech", 443, stream -> {
+            stream
                     .filter(aircraft -> aircraft.getFlight() != null)
                     .filter(aircraft -> aircraft.getLongitude() != null && aircraft.getLatitude() != null)
 //                    .filter(aircraft -> aircraft.getAltitudeGeometric() != null)
@@ -89,6 +87,11 @@ public class Flights {
                                     padLeft(aircraft.getAltitudeBarometer(), " ", 5),
                                     aircraft.getNavigationModes() != null ? "\n\t" + aircraft.getNavigationModes() : ""))
                     .forEach(System.out::println);
+        });
+
+        while (true) {
+            flights.run();
+
             System.out.println();
             System.out.println();
             System.out.println();
